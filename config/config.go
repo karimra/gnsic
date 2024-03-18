@@ -119,6 +119,86 @@ type LocalFlags struct {
 	PathzRotateCreatedOn      string
 	PathzRotatePolicy         string
 	PathzRotateFinalizeAfter  time.Duration
+
+	// Certz
+	// Certz Info
+	CertzInfoCertificate string
+	// Certz CreateCa
+	CertzCreateCaOrg           string
+	CertzCreateCaOrgUnit       string
+	CertzCreateCaCountry       string
+	CertzCreateCaState         string
+	CertzCreateCaLocality      string
+	CertzCreateCaStreetAddress string
+	CertzCreateCaPostalCode    string
+	CertzCreateCaValidity      time.Duration
+	CertzCreateCaKeySize       int
+	CertzCreateCaEmailID       string
+	CertzCreateCaCommonName    string
+	CertzCreateCaKeyOut        string
+	CertzCreateCaCertOut       string
+
+	// Certz Rotate
+	CertzRotateCertificateValidity time.Duration
+	CertzRotateCACert              string
+	CertzRotateCAKey               string
+	CertzRotateForceOverwrite      bool
+	CertzRotateSSLProfileID        string
+	// Certz Rotate GenCSR
+	CertzRotateCSRSuite   string
+	CertzRotateCommonName string
+	CertzRotateCountry    string
+	CertzRotateState      string
+	CertzRotateCity       string
+	CertzRotateOrg        string
+	CertzRotateOrgUnit    string
+	CertzRotateIPAddress  string
+	CertzRotateEmailID    string
+	CertzRotateSanDNS     []string
+	CertzRotateSanEmail   []string
+	CertzRotateSanIP      []string
+	CertzRotateSanURI     []string
+	// Certz Rotate Upload
+	// Certz Rotate Upload Entities
+	CertzRotateEntityCreatedOn []string
+	// Certz Rotate Upload Entity Cert Chain
+	CertzRotateEntityCertChainCertificateVersion  string
+	CertzRotateEntityCertChainCertificateType     []string
+	CertzRotateEntityCertChainCertificateEncoding []string
+	CertzRotateEntityCertChainCertificateCFile    []string
+	CertzRotateEntityCertChainCertificateKFile    []string
+	// Certz Rotate Upload Entity Trust Bundle
+	CertzRotateEntityCertChainTrustBundleVersion  []string
+	CertzRotateEntityCertChainTrustBundleType     []string
+	CertzRotateEntityCertChainTrustBundleEncoding []string
+	CertzRotateEntityCertChainTrustBundleCFile    []string
+	// Certz Rotate Upload Entity CRL
+	CertzRotateEntityCertChainCRLVersion  []string
+	CertzRotateEntityCertChainCRLType     []string
+	CertzRotateEntityCertChainCRLEncoding []string
+	CertzRotateEntityCertChainCRLCFile    []string
+	CertzRotateEntityCertChainCRLID       []string
+	// Certz Rotate Upload Entity AuthPolicy
+	CertzRotateEntityAuthPolicy string
+
+	// Certz Add Profile
+	CertzAddProfileID string
+	// Certz delete Profile
+	CertzDeleteProfileID string
+	// Certz CanGenerateCSR
+	CertzCanGenCSRCSRSuite   string
+	CertzCanGenCSRCommonName string
+	CertzCanGenCSRCountry    string
+	CertzCanGenCSRState      string
+	CertzCanGenCSRCity       string
+	CertzCanGenCSROrg        string
+	CertzCanGenCSROrgUnit    string
+	CertzCanGenCSRIPAddress  string
+	CertzCanGenCSREmailID    string
+	CertzCanGenCSRSanDNS     []string
+	CertzCanGenCSRSanEmail   []string
+	CertzCanGenCSRSanIP      []string
+	CertzCanGenCSRSanURI     []string
 }
 
 func (c *Config) SetLogger() {

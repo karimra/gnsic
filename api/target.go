@@ -8,8 +8,8 @@ import (
 
 	"github.com/AlekSi/pointer"
 	"github.com/karimra/gnsic/config"
-	certz "github.com/openconfig/gnoi/cert"
 	"github.com/openconfig/gnsi/authz"
+	certz "github.com/openconfig/gnsi/certz"
 	"github.com/openconfig/gnsi/credentialz"
 	"github.com/openconfig/gnsi/pathz"
 
@@ -103,8 +103,8 @@ func (t *Target) NewAuthzClient() authz.AuthzClient {
 	return authz.NewAuthzClient(t.client)
 }
 
-func (t *Target) NewCertzClient() certz.CertificateManagementClient {
-	return certz.NewCertificateManagementClient(t.client)
+func (t *Target) NewCertzClient() certz.CertzClient {
+	return certz.NewCertzClient(t.client)
 }
 
 func (t *Target) NewCredentialzClient() credentialz.CredentialzClient {
@@ -225,15 +225,6 @@ func TLSVersion(v string) TargetOption {
 		return nil
 	}
 }
-
-// // LogTLSSecret, if set to true,
-// // enables logging of the TLS master key.
-// func LogTLSSecret(b bool) TargetOption {
-// 	return func(t *Target) error {
-// 		t.Config.LogTLSSecret = pointer.ToBool(b)
-// 		return nil
-// 	}
-// }
 
 // Gzip, if set to true,
 // adds gzip compression to the gRPC connection.

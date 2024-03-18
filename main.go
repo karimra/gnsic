@@ -14,7 +14,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.TODO())
 	setupCloseHandler(cancel)
 	cmd.Execute(ctx)
-
 }
 
 func setupCloseHandler(cancelFn context.CancelFunc) {

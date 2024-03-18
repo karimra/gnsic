@@ -1,0 +1,11 @@
+targets:
+  clab-gnsi-srl1:
+    address: clab-gnsi-srl1
+    username: admin
+    password: NokiaSrl1!
+    skip-verify: true
+  clab-gnsi-srl2:
+    address: clab-gnsi-srl2
+    username: admin
+    password: NokiaSrl1!
+    skip-verify: true

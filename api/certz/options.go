@@ -69,7 +69,7 @@ func CertificatesRequest(opts ...api.GNSIOption) func(m proto.Message) error {
 	}
 }
 
-func GenerateCsr(opts ...api.GNSIOption) func(m proto.Message) error {
+func GenerateCSR(opts ...api.GNSIOption) func(m proto.Message) error {
 	return func(msg proto.Message) error {
 		if msg == nil {
 			return api.ErrInvalidMsgType
@@ -85,7 +85,7 @@ func GenerateCsr(opts ...api.GNSIOption) func(m proto.Message) error {
 				GenerateCsr: genCSRR,
 			}
 		default:
-			return fmt.Errorf("option GenerateCsr: %w: %T", api.ErrInvalidMsgType, msg)
+			return fmt.Errorf("option GenerateCSR: %w: %T", api.ErrInvalidMsgType, msg)
 		}
 		return nil
 	}
@@ -665,6 +665,21 @@ func Org(name string) func(m proto.Message) error {
 			msg.Organization = name
 		default:
 			return fmt.Errorf("option Org: %w: %T", api.ErrInvalidMsgType, msg)
+		}
+		return nil
+	}
+}
+
+func City(name string) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.CSRParams:
+			msg.City = name
+		default:
+			return fmt.Errorf("option City: %w: %T", api.ErrInvalidMsgType, msg)
 		}
 		return nil
 	}
