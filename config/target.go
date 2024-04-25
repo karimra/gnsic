@@ -35,6 +35,8 @@ type TargetConfig struct {
 	//
 	CommonName string `json:"common-name,omitempty"`
 	ResolvedIP string `json:"resolved-ip,omitempty"`
+
+	tlsConfig *tls.Config
 }
 
 func (c *Config) GetTargets() (map[string]*TargetConfig, error) {
@@ -186,7 +188,14 @@ func (tc *TargetConfig) DialOpts() ([]grpc.DialOption, error) {
 	return append(tOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))), nil
 }
 
+func (tc *TargetConfig) SetTLSConfig(tlsConfig *tls.Config) {
+	tc.tlsConfig = tlsConfig
+}
+
 func (tc *TargetConfig) newTLS() (*tls.Config, error) {
+	if tc.tlsConfig != nil {
+		return tc.tlsConfig, nil
+	}
 	tlsConfig := &tls.Config{
 		Renegotiation:      tls.RenegotiateNever,
 		InsecureSkipVerify: *tc.SkipVerify,
