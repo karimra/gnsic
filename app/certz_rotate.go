@@ -222,6 +222,7 @@ func (a *App) certzRotateWithGenerateCertificate(ctx context.Context, t *api.Tar
 		}
 		return
 	}
+
 	rsp, err := t.NewCertzClient().CanGenerateCSR(ctx, canGenReq)
 	if err != nil {
 		rspCh <- &rotateResponse{
@@ -232,6 +233,7 @@ func (a *App) certzRotateWithGenerateCertificate(ctx context.Context, t *api.Tar
 		}
 		return
 	}
+
 	if !rsp.GetCanGenerate() { // case 1
 		a.Logger.Infof("%s: cannot generate CSR", t.Config.Name)
 		a.certzRotateWithGenerateCertificateCannotGenerateCSR(ctx, t, rspCh)
