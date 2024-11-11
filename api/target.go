@@ -153,7 +153,7 @@ func Password(password string) TargetOption {
 	}
 }
 
-// Timeout sets the gNMI client creation timeout.
+// Timeout sets the gNSI client creation timeout.
 func Timeout(timeout time.Duration) TargetOption {
 	return func(t *Target) error {
 		t.Config.Timeout = timeout
@@ -161,7 +161,7 @@ func Timeout(timeout time.Duration) TargetOption {
 	}
 }
 
-// Insecure sets the option to create a gNMI client with an
+// Insecure sets the option to create a gNSI client with an
 // insecure gRPC connection
 func Insecure(i bool) TargetOption {
 	return func(t *Target) error {
@@ -170,7 +170,7 @@ func Insecure(i bool) TargetOption {
 	}
 }
 
-// SkipVerify sets the option to create a gNMI client with a
+// SkipVerify sets the option to create a gNSI client with a
 // secure gRPC connection without verifying the target's certificates.
 func SkipVerify(i bool) TargetOption {
 	return func(t *Target) error {

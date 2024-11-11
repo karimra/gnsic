@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -34,6 +35,7 @@ func (a *App) InitCertzRotateFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&a.Config.CertzRotateCACert, "ca-cert", "cert.pem", "CA certificate used for signing")
 	cmd.Flags().StringVar(&a.Config.CertzRotateCAKey, "ca-key", "key.pem", "CA key used for signing")
 	cmd.Flags().DurationVar(&a.Config.CertzRotateCertificateValidity, "validity", 87600*time.Hour, "certificate validity")
+	cmd.Flags().BoolVar(&a.Config.CertzRotateForceOverwrite, "force", false, "force overwrite certificate profile")
 	//
 	cmd.Flags().StringVar(&a.Config.CertzRotateEntityCertChainCertificateVersion, "version", "", "certificate version")
 	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCreatedOn, "created-on", nil, "entity creation time")
@@ -511,10 +513,23 @@ func (a *App) certzRotateWithGenerateCertificateCanGenerateCSR(ctx context.Conte
 		}
 		return
 	}
+	_, err = stream.Recv()
+	if err != nil {
+		if err == io.EOF {
+			return
+		}
+		rspCh <- &rotateResponse{
+			TargetError: TargetError{
+				TargetName: t.Config.Address,
+				Err:        err,
+			},
+		}
+		return
+	}
 }
 
 func (a *App) certzRotateWithGenerateCertificateCannotGenerateCSR(ctx context.Context, t *api.Target, rspCh chan<- *rotateResponse) error {
-	return nil
+	return errors.New("not implemented")
 }
 
 // helpers
