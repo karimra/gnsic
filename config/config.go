@@ -199,6 +199,8 @@ type LocalFlags struct {
 	CertzCanGenCSRSanEmail   []string
 	CertzCanGenCSRSanIP      []string
 	CertzCanGenCSRSanURI     []string
+	//Version
+	UpgradeUsePkg bool
 }
 
 func (c *Config) SetLogger() {

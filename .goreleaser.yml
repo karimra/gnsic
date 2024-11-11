@@ -1,0 +1,98 @@
+project_name: gnsic
+builds:
+  - env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/karimra/gnsic/app.version={{.Version}} -X github.com/karimra/gnsic/app.commit={{.ShortCommit}} -X github.com/karimra/gnsic/app.date={{.Date}} -X github.com/karimra/gnsic/app.gitURL={{.GitURL}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - "386"
+      - arm
+      - arm64
+dockers:
+  - goos: linux
+    goarch: amd64
+    ids:
+      - gnsic
+    image_templates:
+      - &amd64_latest_image "ghcr.io/karimra/gnsic:latest-amd64"
+      - &amd64_versioned_image 'ghcr.io/karimra/gnsic:{{ replace .Version "v" ""}}-amd64'
+    dockerfile: goreleaser-alpine.dockerfile
+    skip_push: false
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+  - goos: linux
+    goarch: arm64
+    ids:
+      - gnsic
+    image_templates:
+      - &arm64_latest_image "ghcr.io/karimra/gnsic:latest-arm64"
+      - &arm64_versioned_image 'ghcr.io/karimra/gnsic:{{ replace .Version "v" ""}}-arm64'
+    dockerfile: goreleaser-alpine.dockerfile
+    skip_push: false
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+  - goos: linux
+    goarch: amd64
+    ids:
+      - gnsic
+    image_templates:
+      - "ghcr.io/karimra/gnsic:latest-scratch"
+      - 'ghcr.io/karimra/gnsic:{{ replace .Version "v" ""}}-scratch'
+    dockerfile: goreleaser-scratch.dockerfile
+    skip_push: false
+docker_manifests:
+  - name_template: 'ghcr.io/karimra/gnsic:{{ replace .Version "v" "" }}'
+    image_templates:
+      - *amd64_versioned_image
+      - *arm64_versioned_image
+  - name_template: "{{- if not .IsSnapshot}}ghcr.io/karimra/gnsic:latest{{- end}}"
+    image_templates:
+      - *amd64_latest_image
+      - *arm64_latest_image
+archives:
+  - name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else if eq .Arch "arm" }}armv7
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+checksum:
+  name_template: "checksums.txt"
+snapshot:
+  name_template: "{{ .Tag }}"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+nfpms:
+  - id: gnsic
+    file_name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else if eq .Arch "arm" }}armv7
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+    vendor: gnsic
+    homepage: https://gnsic.kmrd.dev
+    maintainer: Karim Radhouani <medkarimrdi@gmail.com>
+    description: gNSI Client
+    license: Apache 2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin

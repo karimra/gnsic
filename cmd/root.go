@@ -26,6 +26,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		newAuthzCmd(),
 		newCertzCmd(),
 		newServerCmd(),
+		newVersionCmd(),
 	)
 	return gApp.RootCmd
 }
