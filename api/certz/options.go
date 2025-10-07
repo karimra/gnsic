@@ -251,6 +251,81 @@ func CertificateEncodingCustom(i int32) func(m proto.Message) error {
 	}
 }
 
+func PrivateKeyType_RawPrivateKey(b []byte) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Certificate:
+			msg.PrivateKeyType = &certzpb.Certificate_RawPrivateKey{
+				RawPrivateKey: b,
+			}
+		}
+		return nil
+	}
+}
+
+func PrivateKeyType_KeySourceCustom(i int32) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Certificate:
+			msg.PrivateKeyType = &certzpb.Certificate_KeySource_{
+				KeySource: certzpb.Certificate_KeySource(i),
+			}
+		}
+		return nil
+	}
+}
+
+func PrivateKeyType_KeySourceUnspecified() func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Certificate:
+			msg.PrivateKeyType = &certzpb.Certificate_KeySource_{
+				KeySource: certzpb.Certificate_KEY_SOURCE_UNSPECIFIED,
+			}
+		}
+		return nil
+	}
+}
+
+func PrivateKeyType_KeySourceIDEVID_TPM() func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Certificate:
+			msg.PrivateKeyType = &certzpb.Certificate_KeySource_{
+				KeySource: certzpb.Certificate_KEY_SOURCE_IDEVID_TPM,
+			}
+		}
+		return nil
+	}
+}
+
+func PrivateKeyType_KeySourceGenerated() func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Certificate:
+			msg.PrivateKeyType = &certzpb.Certificate_KeySource_{
+				KeySource: certzpb.Certificate_KEY_SOURCE_GENERATED,
+			}
+		}
+		return nil
+	}
+}
+
 func CertificateChain(opts ...api.GNSIOption) func(m proto.Message) error {
 	return func(msg proto.Message) error {
 		if msg == nil {
