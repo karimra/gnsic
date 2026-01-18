@@ -714,7 +714,6 @@ func certificateFromCSR(csr *x509.CertificateRequest, certExpiration time.Durati
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		NotAfter:              time.Now().Add(certExpiration),
 		NotBefore:             time.Now().Add(-1 * time.Hour),
-		SignatureAlgorithm:    csr.SignatureAlgorithm,
 		Subject:               csr.Subject,
 		Signature:             csr.Signature,
 		Extensions:            csr.Extensions,
