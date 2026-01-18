@@ -95,7 +95,7 @@ type TargetError struct {
 }
 
 func (a *App) createBaseDialOpts() []grpc.DialOption {
-	opts := []grpc.DialOption{grpc.WithBlock()}
+	opts := []grpc.DialOption{}
 	if !a.Config.ProxyFromEnv {
 		opts = append(opts, grpc.WithNoProxy())
 	}
