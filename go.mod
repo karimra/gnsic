@@ -13,7 +13,7 @@ require (
 	github.com/openconfig/gnsi v1.9.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.7.0
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.15.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
