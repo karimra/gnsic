@@ -5,6 +5,8 @@ go 1.24.3
 require (
 	github.com/AlekSi/pointer v1.2.0
 	github.com/adrg/xdg v0.5.3
+	github.com/fsnotify/fsnotify v1.7.0
+	github.com/google/uuid v1.6.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/olekukonko/tablewriter v0.0.5
@@ -18,7 +20,6 @@ require (
 )
 
 require (
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
