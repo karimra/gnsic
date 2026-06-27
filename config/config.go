@@ -172,6 +172,9 @@ type LocalFlags struct {
 	CertzRotateEntityCertChainTrustBundleType     []string
 	CertzRotateEntityCertChainTrustBundleEncoding []string
 	CertzRotateEntityCertChainTrustBundleCFile    []string
+	// Certz Rotate Upload Entity Trust Bundle (PKCS#7)
+	CertzRotateEntityCertChainTrustBundlePKCS7File    []string
+	CertzRotateEntityCertChainTrustBundlePKCS7Version []string
 	// Certz Rotate Upload Entity CRL
 	CertzRotateEntityCertChainCRLVersion  []string
 	CertzRotateEntityCertChainCRLType     []string
@@ -179,7 +182,12 @@ type LocalFlags struct {
 	CertzRotateEntityCertChainCRLCFile    []string
 	CertzRotateEntityCertChainCRLID       []string
 	// Certz Rotate Upload Entity AuthPolicy
-	CertzRotateEntityAuthPolicy string
+	CertzRotateEntityAuthPolicy        string
+	CertzRotateEntityAuthPolicyVersion string
+	// Certz Rotate Upload Entity ExistingEntity
+	CertzRotateExistingProfileID []string
+	CertzRotateExistingType      []string
+	CertzRotateExistingVersion   []string
 
 	// Certz Add Profile
 	CertzAddProfileID string

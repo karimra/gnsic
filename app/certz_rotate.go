@@ -5,28 +5,31 @@ import (
 	"context"
 	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/karimra/gnsic/api"
 	certzapi "github.com/karimra/gnsic/api/certz"
+	"github.com/karimra/gnsic/server/certz/certzcsr"
 
 	certz "github.com/openconfig/gnsi/certz"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 func (a *App) InitCertzRotateFlags(cmd *cobra.Command) {
@@ -66,12 +69,21 @@ func (a *App) InitCertzRotateFlags(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainTrustBundleCFile, "bundle-cert-file", nil, "trust bundle certificate file")
 	// cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainTrustBundleKFile, "bundle-key-file", nil, "trust bundle key file")
 	//
+	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainTrustBundlePKCS7File, "bundle-pkcs7-file", nil, "PKCS#7 trust bundle file")
+	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainTrustBundlePKCS7Version, "bundle-pkcs7-version", nil, "PKCS#7 trust bundle version")
+	//
+	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainCRLVersion, "crl-version", nil, "certificate revocation list version")
 	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainCRLType, "crl-type", nil, "certificate revocation list type")
 	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainCRLEncoding, "crl-encoding", nil, "certificate revocation list encoding")
 	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainCRLCFile, "crl-cert-file", nil, "certificate revocation list file")
 	cmd.Flags().StringArrayVar(&a.Config.CertzRotateEntityCertChainCRLID, "crl-id", nil, "certificate revocation list ID")
 	//
-	cmd.Flags().StringVar(&a.Config.CertzRotateEntityAuthPolicy, "auth-policy", "", "authentication policy file")
+	cmd.Flags().StringVar(&a.Config.CertzRotateEntityAuthPolicy, "auth-policy", "", "authentication policy file (serialized google.protobuf.Any, JSON)")
+	cmd.Flags().StringVar(&a.Config.CertzRotateEntityAuthPolicyVersion, "auth-policy-version", "", "authentication policy version")
+	//
+	cmd.Flags().StringArrayVar(&a.Config.CertzRotateExistingProfileID, "existing-profile-id", nil, "source SSL profile ID to copy an existing entity from")
+	cmd.Flags().StringArrayVar(&a.Config.CertzRotateExistingType, "existing-type", nil, "existing entity type: certificate-chain|trust-bundle|crl-bundle|auth-policy")
+	cmd.Flags().StringArrayVar(&a.Config.CertzRotateExistingVersion, "existing-version", nil, "existing entity version")
 	//
 	cmd.LocalFlags().VisitAll(func(flag *pflag.Flag) {
 		a.Config.FileConfig.BindPFlag(fmt.Sprintf("%s-%s", cmd.Name(), flag.Name), flag)
@@ -92,21 +104,33 @@ func (r *rotateResponse) Response() any {
 }
 
 func (a *App) PreRunECertzRotate(cmd *cobra.Command, args []string) error {
-	// uploading pre generated certificate(s)
-	if a.Config.CertzRotateEntityCertChainCertificateCFile != nil {
-		if len(a.Config.CertzRotateEntityCertChainCertificateCFile) != len(a.Config.CertzRotateEntityCertChainCertificateKFile) {
-			return fmt.Errorf("non-matching number of Certificate(s) and Key(s)")
-		}
-		return nil
+	// the proto returns InvalidArgument if ssl_profile_id is empty.
+	if a.Config.CertzRotateSSLProfileID == "" {
+		return errors.New("missing SSL profile ID: set --id")
 	}
-	// generating certificate
+	// uploading pre-generated certificate(s)
+	if len(a.Config.CertzRotateEntityCertChainCertificateCFile) != 0 {
+		if len(a.Config.CertzRotateEntityCertChainCertificateCFile) != len(a.Config.CertzRotateEntityCertChainCertificateKFile) {
+			return fmt.Errorf("non-matching number of certificate(s) (--cert-file) and key(s) (--key-file)")
+		}
+	}
+	// generating a certificate
 	if a.Config.CertzRotateCommonName != "" {
 		if a.Config.CertzRotateCACert == "" || a.Config.CertzRotateCAKey == "" {
-			return fmt.Errorf("missing CA cert and/or key for signing generated certificates")
+			return fmt.Errorf("missing CA cert and/or key (--ca-cert/--ca-key) for signing generated certificates")
+		}
+		if a.Config.CertzRotateCSRSuite != "" {
+			if _, ok := certz.CSRSuite_value[a.Config.CertzRotateCSRSuite]; !ok {
+				return fmt.Errorf("invalid --csr-suite %q", a.Config.CertzRotateCSRSuite)
+			}
 		}
 	}
-	// validate trust bundles input
-	if len(a.Config.CertzRotateEntityCertChainTrustBundleCFile) != 0 {
+	// optional parallel arrays must match their primary array when provided.
+	if n := len(a.Config.CertzRotateEntityCertChainTrustBundleVersion); n != 0 && n != len(a.Config.CertzRotateEntityCertChainTrustBundleCFile) {
+		return errors.New("--bundle-version count must match --bundle-cert-file count")
+	}
+	if n := len(a.Config.CertzRotateExistingProfileID); n != 0 && len(a.Config.CertzRotateExistingType) != n {
+		return errors.New("--existing-type count must match --existing-profile-id count")
 	}
 	return nil
 }
@@ -151,39 +175,148 @@ func (a *App) certzRotateRequest(ctx context.Context, t *api.Target, rspCh chan<
 	a.Logger.Debugf("%s: creating a gRPC client", t.Config.Name)
 	err := t.CreateGrpcClient(ctx, a.createBaseDialOpts()...)
 	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        err,
-			},
-		}
+		rspCh <- a.rotateErr(t, err)
 		return
 	}
 	defer t.Close()
 
-	// uploading a pre generated certificate (and potentially intermediate certs)
-	if len(a.Config.CertzRotateEntityCertChainCertificateCFile) != 0 && a.Config.CertzRotateCommonName == "" {
-	}
-
-	// if common-name is specified, we are generating a certificate. (case1, case2)
-	if a.Config.CertzRotateCommonName != "" {
+	switch {
+	// generating a certificate: case 1 (local CSR) or case 2 (target CSR),
+	// decided by CanGenerateCSR.
+	case a.Config.CertzRotateCommonName != "":
 		a.certzRotateWithGenerateCertificate(ctx, t, rspCh)
+	// uploading a pre-generated certificate (+ key) and optional intermediates.
+	case len(a.Config.CertzRotateEntityCertChainCertificateCFile) != 0:
+		a.certzRotateUploadPreGenerated(ctx, t, rspCh)
+	// upload-only rotation: trust bundle / CRL / auth policy / existing entity
+	// (cases 3, 4, 5).
+	case a.hasUploadOnlyEntities():
+		a.certzRotateUploadOnly(ctx, t, rspCh)
+	default:
+		rspCh <- a.rotateErr(t, errors.New("nothing to rotate: provide --cn, --cert-file, --bundle-cert-file, --bundle-pkcs7-file, --crl-cert-file, --auth-policy or --existing-profile-id"))
+	}
+}
+
+// rotateErr wraps an error into a per-target rotate response.
+func (a *App) rotateErr(t *api.Target, err error) *rotateResponse {
+	return &rotateResponse{
+		TargetError: TargetError{
+			TargetName: t.Config.Address,
+			Err:        err,
+		},
+	}
+}
+
+// hasUploadOnlyEntities reports whether any entity that can be rotated without a
+// (re)generated certificate is requested.
+func (a *App) hasUploadOnlyEntities() bool {
+	return len(a.Config.CertzRotateEntityCertChainTrustBundleCFile) != 0 ||
+		len(a.Config.CertzRotateEntityCertChainTrustBundlePKCS7File) != 0 ||
+		len(a.Config.CertzRotateEntityCertChainCRLCFile) != 0 ||
+		a.Config.CertzRotateEntityAuthPolicy != "" ||
+		len(a.Config.CertzRotateExistingProfileID) != 0
+}
+
+// rotateUploadAndFinalize sends an UploadRequest carrying entityOpts, reads the
+// UploadResponse, then commits with a FinalizeRequest. The target closes the
+// stream (io.EOF) on a successful commit; an error after Finalize means the
+// commit failed and the target rolled back. On success the UploadResponse is
+// forwarded to rspCh. Note: the optional "test the new connection before
+// finalizing" step described by the proto is intentionally not performed.
+func (a *App) rotateUploadAndFinalize(t *api.Target, stream certz.Certz_RotateClient, entityOpts []api.GNSIOption, rspCh chan<- *rotateResponse) {
+	uploadReq, err := certzapi.NewRotateCertificateRequest(
+		certzapi.ForceOverwrite(a.Config.CertzRotateForceOverwrite),
+		certzapi.SSLProfileID(a.Config.CertzRotateSSLProfileID),
+		certzapi.CertificatesRequest(entityOpts...),
+	)
+	if err != nil {
+		rspCh <- a.rotateErr(t, fmt.Errorf("failed creating upload request: %v", err))
 		return
 	}
-	// else if only a trust bundle is specified: case 3
-	if a.Config.CertzRotateEntityCertChainTrustBundleCFile != nil {
-
+	a.Logger.Infof("%s: sending upload request: %v", t.Config.Name, uploadReq)
+	if err := stream.Send(uploadReq); err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
 	}
+	uploadResponse, err := stream.Recv()
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	a.Logger.Infof("%s: upload response: %v", t.Config.Name, uploadResponse)
 
-	// else if a CRL is specified: case 4
+	// finalize / commit
+	finalizeReq, err := certzapi.NewRotateCertificateRequest(
+		certzapi.ForceOverwrite(a.Config.CertzRotateForceOverwrite),
+		certzapi.SSLProfileID(a.Config.CertzRotateSSLProfileID),
+		certzapi.FinalizeRotation(),
+	)
+	if err != nil {
+		rspCh <- a.rotateErr(t, fmt.Errorf("failed creating finalize request: %v", err))
+		return
+	}
+	a.Logger.Infof("%s: sending finalize request", t.Config.Name)
+	if err := stream.Send(finalizeReq); err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	if err := stream.CloseSend(); err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	if _, err := stream.Recv(); err != nil && err != io.EOF {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	rspCh <- &rotateResponse{
+		TargetError: TargetError{TargetName: t.Config.Address},
+		rsp:         uploadResponse,
+	}
+}
 
-	// else if a policy is set: case 5
+// certzRotateUploadPreGenerated implements uploading a pre-generated certificate
+// chain (certificate + private key, with optional intermediates) read from
+// files, plus any extra entities. This is the upload-only variant of case 1.
+func (a *App) certzRotateUploadPreGenerated(ctx context.Context, t *api.Target, rspCh chan<- *rotateResponse) {
+	createdOn := time.Now()
+	certEntity, err := a.buildPreGeneratedCertEntityOpt(createdOn)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	extra, err := a.buildExtraEntityOpts(createdOn)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	stream, err := t.NewCertzClient().Rotate(ctx)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	a.rotateUploadAndFinalize(t, stream, append([]api.GNSIOption{certEntity}, extra...), rspCh)
+}
 
-	// build CSRParams
-	// run can generate CSR
-	// if true, rely on router, send CSR, get cert, sign it and upload
-	// if false, generate CSR, sign and upload
-
+// certzRotateUploadOnly implements cases 3 (trust bundle), 4 (CRL) and 5
+// (authentication policy), as well as existing-entity copies, by uploading only
+// the requested entities.
+func (a *App) certzRotateUploadOnly(ctx context.Context, t *api.Target, rspCh chan<- *rotateResponse) {
+	createdOn := time.Now()
+	entities, err := a.buildExtraEntityOpts(createdOn)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	if len(entities) == 0 {
+		rspCh <- a.rotateErr(t, errors.New("no entities to upload"))
+		return
+	}
+	stream, err := t.NewCertzClient().Rotate(ctx)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	a.rotateUploadAndFinalize(t, stream, entities, rspCh)
 }
 
 // helpers
@@ -295,259 +428,174 @@ func (a *App) certzRotateWithGenerateCertificateCanGenerateCSR(ctx context.Conte
 	a.Logger.Infof("%s: got CSR back: %v", t.Config.Name, genCSRRsp)
 	createdOn := time.Now()
 
-	//
-	block, _ := pem.Decode(genCSRRsp.GetGeneratedCsr().GetCertificateSigningRequest().GetCertificateSigningRequest())
-	if block == nil {
-		a.Logger.Errorf("%s: failed to decode returned CSR", t.Config.Name)
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("failed to decode returned CSR"),
-			},
-		}
-		return
-	}
-
-	cs, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		a.Logger.Errorf("%s: failed to parse returned CSR: %v", t.Config.Name, err)
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("failed to parse returned CSR: %v", err),
-			},
-		}
-		return
-
-	}
-	s, err := CertificateRequestText(cs)
-	if err != nil {
-		a.Logger.Errorf("%s: failed to print returned CSR: %v", t.Config.Name, err)
-	}
-	a.Logger.Infof("%s: returned CSR:\n%s", t.Config.Name, s)
-	//
-
 	csrBytes := genCSRRsp.GetGeneratedCsr().GetCertificateSigningRequest().GetCertificateSigningRequest()
 	p, rest := pem.Decode(csrBytes)
 	if p == nil || len(rest) > 0 {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("%q failed to decode returned CSR", t.Config.Address),
-			},
-		}
+		rspCh <- a.rotateErr(t, fmt.Errorf("%q failed to decode returned CSR", t.Config.Address))
 		return
 	}
 	creq, err := x509.ParseCertificateRequest(p.Bytes)
 	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("failed parsing certificate request: %v", err),
-			},
-		}
+		rspCh <- a.rotateErr(t, fmt.Errorf("failed parsing certificate request: %v", err))
+		return
+	}
+	if s, err := CertificateRequestText(creq); err == nil {
+		a.Logger.Infof("%s: returned CSR:\n%s", t.Config.Name, s)
+	}
+
+	certPEM, err := a.signCSRToCertPEM(creq)
+	if err != nil {
+		rspCh <- a.rotateErr(t, fmt.Errorf("%q %v", t.Config.Address, err))
 		return
 	}
 
-	// create certificate from CSR
-	certificate, err := certificateFromCSR(creq, a.Config.CertzRotateCertificateValidity)
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("failed parsing certificate request: %v", err),
-			},
-		}
-		return
-	}
-
-	// read CA cert & key
-	caCert, err := tls.LoadX509KeyPair(a.Config.CertzRotateCACert, a.Config.CertzRotateCAKey)
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("failed parsing certificate request: %v", err),
-			},
-		}
-		return
-	}
-	if len(caCert.Certificate) != 1 {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        errors.New("CA cert and key contains 0 or more than 1 certificate"),
-			},
-		}
-		return
-	}
-	c, err := x509.ParseCertificate(caCert.Certificate[0])
-	if c != nil && err == nil {
-		caCert.Leaf = c
-	}
-	a.Logger.Infof("read local CA certs")
-
-	// sign it
-	signedCert, err := a.sign(certificate, &caCert)
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("%q failed signing certificate: %v", t.Config.Address, err),
-			},
-		}
-		return
-	}
-	b, err := toPEM(signedCert)
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("%q failed converting certificate to PEM: %v", t.Config.Address, err),
-			},
-		}
-		return
-	}
-
-	// upload it
-	// upload optins
-	uploadReqOpts := []api.GNSIOption{
-		certzapi.ForceOverwrite(a.Config.CertzRotateForceOverwrite),
-		certzapi.SSLProfileID(a.Config.CertzRotateSSLProfileID),
-		// certzapi.CertificatesRequest(
-		// 	certzapi.Entity(
-		// 		certzapi.Version(a.Config.CertzRotateCertificateVersion),
-		// 		certzapi.CreatedOn(uint64(createdOn.Unix())),
-		// 		certzapi.CertificateChain(
-		// 			certzapi.Certificate(
-		// 				certzapi.CertificateType_X509(),
-		// 				certzapi.CertificateEncoding_PEM(),
-		// 				certzapi.CertificateBytes(b),
-		// 				// NO private key in this case
-		// 			),
-		// 		),
-		// 	),
-		// ),
-	}
-	// build certificate entity
-	entities := []api.GNSIOption{
-		certzapi.Entity(
-			certzapi.Version(a.Config.CertzRotateEntityCertChainCertificateVersion),
-			certzapi.CreatedOn(uint64(createdOn.Unix())),
-			certzapi.CertificateChain(
-				certzapi.Certificate(
-					certzapi.CertificateType_X509(),
-					certzapi.CertificateEncoding_PEM(),
-					certzapi.CertificateBytes(b),
-					// NO private key in this case
-				),
+	// certificate entity WITHOUT a private key: the target holds the key it
+	// generated for the CSR.
+	certEntity := certzapi.Entity(
+		certzapi.Version(a.Config.CertzRotateEntityCertChainCertificateVersion),
+		certzapi.CreatedOn(uint64(createdOn.Unix())),
+		certzapi.CertificateChain(
+			certzapi.Certificate(
+				certzapi.CertificateType_X509(),
+				certzapi.CertificateEncoding_PEM(),
+				certzapi.CertificateBytes(certPEM),    // deprecated field, kept for compatibility
+				certzapi.CertificateRawBytes(certPEM), // raw_certificate oneof
 			),
 		),
-	}
-
-	// add trust/crl if defined
-	trustBundleEntity, err := a.buildUploadRequestTrustBundleOpts(createdOn)
+	)
+	extra, err := a.buildExtraEntityOpts(createdOn)
 	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("%q failed reading trust bundle: %v", t.Config.Address, err),
-			},
-		}
+		rspCh <- a.rotateErr(t, err)
 		return
 	}
-	entities = append(entities, trustBundleEntity...)
-	//
-	uploadReqOpts = append(uploadReqOpts, certzapi.CertificatesRequest(entities...))
-	//
-	uploadReq, err := certzapi.NewRotateCertificateRequest(uploadReqOpts...)
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        fmt.Errorf("failed creating upload certificate request: %v", err),
-			},
-		}
-		return
-	}
-	a.Logger.Infof("%s: sending upload request: %v", t.Config.Name, uploadReq)
-	err = stream.Send(uploadReq)
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        err,
-			},
-		}
-		return
-	}
-	// read upload response
-	uploadResponse, err := stream.Recv()
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        err,
-			},
-		}
-		return
-	}
-	a.Logger.Infof("%s: upload Response %v", t.Config.Name, uploadResponse)
-	// TODO: test it?
-
-	// Finalize
-	err = stream.Send(&certz.RotateCertificateRequest{
-		ForceOverwrite: a.Config.CertzRotateForceOverwrite,
-		SslProfileId:   a.Config.CertzRotateSSLProfileID,
-		RotateRequest: &certz.RotateCertificateRequest_FinalizeRotation{
-			FinalizeRotation: &certz.FinalizeRequest{},
-		},
-	})
-	// TODO: check what error the device returns here
-	if err != nil {
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        err,
-			},
-		}
-		return
-	}
-	_, err = stream.Recv()
-	if err != nil {
-		if err == io.EOF {
-			return
-		}
-		rspCh <- &rotateResponse{
-			TargetError: TargetError{
-				TargetName: t.Config.Address,
-				Err:        err,
-			},
-		}
-		return
-	}
+	a.rotateUploadAndFinalize(t, stream, append([]api.GNSIOption{certEntity}, extra...), rspCh)
 }
 
-func (a *App) certzRotateWithGenerateCertificateCannotGenerateCSR(ctx context.Context, t *api.Target, rspCh chan<- *rotateResponse) error {
-	return errors.New("not implemented")
+// certzRotateWithGenerateCertificateCannotGenerateCSR implements case 1: the
+// client generates the key and CSR locally, signs it with the configured CA and
+// uploads the signed certificate together with the private key.
+func (a *App) certzRotateWithGenerateCertificateCannotGenerateCSR(ctx context.Context, t *api.Target, rspCh chan<- *rotateResponse) {
+	createdOn := time.Now()
+	keyPEM, creq, err := a.createLocalCSR(t)
+	if err != nil {
+		rspCh <- a.rotateErr(t, fmt.Errorf("failed creating local CSR: %v", err))
+		return
+	}
+	if s, err := CertificateRequestText(creq); err == nil {
+		a.Logger.Infof("%s: local CSR:\n%s", t.Config.Name, s)
+	}
+	certPEM, err := a.signCSRToCertPEM(creq)
+	if err != nil {
+		rspCh <- a.rotateErr(t, fmt.Errorf("%q %v", t.Config.Address, err))
+		return
+	}
+	stream, err := t.NewCertzClient().Rotate(ctx)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	// certificate entity WITH the locally-generated private key.
+	certEntity := certzapi.Entity(
+		certzapi.Version(a.Config.CertzRotateEntityCertChainCertificateVersion),
+		certzapi.CreatedOn(uint64(createdOn.Unix())),
+		certzapi.CertificateChain(
+			certzapi.Certificate(
+				certzapi.CertificateType_X509(),
+				certzapi.CertificateEncoding_PEM(),
+				certzapi.CertificateBytes(certPEM),
+				certzapi.CertificateRawBytes(certPEM),
+				certzapi.PrivateKeyBytes(keyPEM),              // deprecated field, kept for compatibility
+				certzapi.PrivateKeyType_RawPrivateKey(keyPEM), // raw_private_key oneof
+			),
+		),
+	)
+	extra, err := a.buildExtraEntityOpts(createdOn)
+	if err != nil {
+		rspCh <- a.rotateErr(t, err)
+		return
+	}
+	a.rotateUploadAndFinalize(t, stream, append([]api.GNSIOption{certEntity}, extra...), rspCh)
+}
+
+// signCSRToCertPEM builds a certificate from a CSR and signs it with the CA
+// configured via --ca-cert/--ca-key, returning the PEM-encoded certificate.
+func (a *App) signCSRToCertPEM(creq *x509.CertificateRequest) ([]byte, error) {
+	certificate, err := certificateFromCSR(creq, a.Config.CertzRotateCertificateValidity)
+	if err != nil {
+		return nil, fmt.Errorf("failed building certificate from CSR: %v", err)
+	}
+	caCert, err := tls.LoadX509KeyPair(a.Config.CertzRotateCACert, a.Config.CertzRotateCAKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed loading CA cert/key: %v", err)
+	}
+	if len(caCert.Certificate) != 1 {
+		return nil, errors.New("CA cert and key contains 0 or more than 1 certificate")
+	}
+	if c, err := x509.ParseCertificate(caCert.Certificate[0]); err == nil && c != nil {
+		caCert.Leaf = c
+	}
+	signedCert, err := a.sign(certificate, &caCert)
+	if err != nil {
+		return nil, fmt.Errorf("failed signing certificate: %v", err)
+	}
+	return toPEM(signedCert)
+}
+
+// buildPreGeneratedCertEntityOpt reads a certificate chain (leaf first, then
+// intermediates) and matching keys from files into a single CertificateChain
+// entity. Files are linked via the CertificateChain `parent` field.
+func (a *App) buildPreGeneratedCertEntityOpt(createdOn time.Time) (api.GNSIOption, error) {
+	files := a.Config.CertzRotateEntityCertChainCertificateCFile
+	keys := a.Config.CertzRotateEntityCertChainCertificateKFile
+	if len(files) == 0 {
+		return nil, errors.New("no certificate files provided")
+	}
+	// build from the root inward so each level nests the already-built parent.
+	var chainOpts []api.GNSIOption
+	for i := len(files) - 1; i >= 0; i-- {
+		certBytes, err := os.ReadFile(files[i])
+		if err != nil {
+			return nil, fmt.Errorf("failed reading certificate %q: %v", files[i], err)
+		}
+		certOpts := []api.GNSIOption{
+			certzapi.CertificateType_X509(),
+			certzapi.CertificateEncoding_PEM(),
+			certzapi.CertificateBytes(certBytes),
+			certzapi.CertificateRawBytes(certBytes),
+		}
+		if i < len(keys) && keys[i] != "" {
+			keyBytes, err := os.ReadFile(keys[i])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading key %q: %v", keys[i], err)
+			}
+			certOpts = append(certOpts,
+				certzapi.PrivateKeyBytes(keyBytes),
+				certzapi.PrivateKeyType_RawPrivateKey(keyBytes),
+			)
+		}
+		levelOpts := append([]api.GNSIOption{certzapi.Certificate(certOpts...)}, chainOpts...)
+		chainOpts = []api.GNSIOption{certzapi.CertificateChain(levelOpts...)}
+	}
+	entityOpts := append([]api.GNSIOption{
+		certzapi.Version(a.Config.CertzRotateEntityCertChainCertificateVersion),
+		certzapi.CreatedOn(uint64(createdOn.Unix())),
+	}, chainOpts...)
+	return certzapi.Entity(entityOpts...), nil
 }
 
 // helpers
 // TODO: implement proper key generation
+// createLocalCSR generates a private key and CSR locally according to the
+// configured CSR suite (defaulting to RSA-2048/SHA-256). It returns the
+// PEM-encoded (PKCS#8) private key and the parsed CSR.
 func (a *App) createLocalCSR(t *api.Target) ([]byte, *x509.CertificateRequest, error) {
-	var commonName = a.Config.CertzRotateCommonName
-	var ipAddr = a.Config.CertzRotateIPAddress
-
+	commonName := a.Config.CertzRotateCommonName
 	if commonName == "" {
 		commonName = t.Config.CommonName
 	}
+	ipAddr := a.Config.CertzRotateIPAddress
 	if ipAddr == "" {
 		ipAddr = t.Config.ResolvedIP
-	}
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048) // TODO:
-	if err != nil {
-		return nil, nil, err
 	}
 
 	var subj pkix.Name
@@ -569,50 +617,56 @@ func (a *App) createLocalCSR(t *api.Target) ([]byte, *x509.CertificateRequest, e
 	if a.Config.CertzRotateOrgUnit != "" {
 		subj.OrganizationalUnit = []string{a.Config.CertzRotateOrgUnit}
 	}
-	if a.Config.CertzRotateEmailID != "" {
-		subj.ExtraNames = append(subj.ExtraNames, pkix.AttributeTypeAndValue{
-			Type: oidEmailAddress,
-			Value: asn1.RawValue{
-				Tag:   asn1.TagIA5String,
-				Bytes: []byte(a.Config.CertzRotateEmailID),
-			},
-		})
-	}
 
-	var ipAddrs net.IP
+	input := certzcsr.CSRInput{Subject: subj}
+	if commonName != "" {
+		input.DNSNames = append(input.DNSNames, commonName)
+	}
+	input.DNSNames = append(input.DNSNames, a.Config.CertzRotateSanDNS...)
 	if ipAddr != "" {
-		ipAddrs = net.ParseIP(ipAddr)
+		if ip := net.ParseIP(ipAddr); ip != nil {
+			input.IPAddresses = append(input.IPAddresses, ip)
+		}
 	}
-	template := x509.CertificateRequest{
-		Subject:            subj,
-		EmailAddresses:     []string{a.Config.CertzRotateEmailID},
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		IPAddresses:        make([]net.IP, 0),
-		DNSNames:           []string{commonName},
+	for _, s := range a.Config.CertzRotateSanIP {
+		if ip := net.ParseIP(s); ip != nil {
+			input.IPAddresses = append(input.IPAddresses, ip)
+		}
+	}
+	if a.Config.CertzRotateEmailID != "" {
+		input.EmailAddresses = append(input.EmailAddresses, a.Config.CertzRotateEmailID)
+	}
+	input.EmailAddresses = append(input.EmailAddresses, a.Config.CertzRotateSanEmail...)
+	for _, s := range a.Config.CertzRotateSanURI {
+		u, err := url.Parse(s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed parsing SAN URI %q: %v", s, err)
+		}
+		input.URIs = append(input.URIs, u)
 	}
 
-	if ipAddrs != nil {
-		template.IPAddresses = append(template.IPAddresses, ipAddrs)
+	suite := a.Config.CertzRotateCSRSuite
+	if suite == "" {
+		suite = certz.CSRSuite_CSRSUITE_X509_KEY_TYPE_RSA_2048_SIGNATURE_ALGORITHM_SHA_2_256.String()
 	}
-
-	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, &template, privateKey)
+	csrPEM, privKey, err := certzcsr.CreateCSRFromSuiteName(suite, input)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create Certificate Request: %v", err)
+		return nil, nil, fmt.Errorf("failed creating CSR: %v", err)
 	}
-	creq, err := x509.ParseCertificateRequest(csrBytes)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(privKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed parsing certificate request: %v", err)
+		return nil, nil, fmt.Errorf("failed marshaling private key: %v", err)
 	}
-	//TODO:
-	return nil, creq, nil
-	// return &cert.KeyPair{
-	// 		PrivateKey: pem.EncodeToMemory(&pem.Block{
-	// 			Type:  "RSA PRIVATE KEY",
-	// 			Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-	// 		}),
-	// 		PublicKey: csrBytes,
-	// 	},
-	// 	creq, err
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		return nil, nil, errors.New("failed to decode generated CSR")
+	}
+	creq, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed parsing generated CSR: %v", err)
+	}
+	return keyPEM, creq, nil
 }
 
 // func (a *App) createRemoteCSRInstall(stream cert.CertificateManagement_InstallClient, t *api.Target) (*x509.CertificateRequest, error) {
@@ -735,11 +789,7 @@ func genSerialNumber() (*big.Int, error) {
 }
 
 func keyID(pub crypto.PublicKey) ([]byte, error) {
-	pk, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("failed to parse public key, not a rsa.PublicKey type")
-	}
-	pkBytes, err := asn1.Marshal(*pk)
+	pkBytes, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal public key: %v", err)
 	}
@@ -764,28 +814,136 @@ func toPEM(c *x509.Certificate) ([]byte, error) {
 	return b.Bytes(), err
 }
 
-func (a *App) buildUploadRequestTrustBundleOpts(createdOn time.Time) ([]api.GNSIOption, error) {
-	opts := make([]api.GNSIOption, 0, len(a.Config.CertzRotateEntityCertChainTrustBundleCFile))
+// buildExtraEntityOpts builds upload Entity options for every non-certificate
+// artifact requested via flags: X509 trust bundles, PKCS#7 trust bundles, CRL
+// bundles, an authentication policy and existing-entity copies. These are shared
+// across all rotation cases (they may be uploaded alongside a certificate or on
+// their own for cases 3, 4 and 5).
+func (a *App) buildExtraEntityOpts(createdOn time.Time) ([]api.GNSIOption, error) {
+	ts := uint64(createdOn.Unix())
+	opts := make([]api.GNSIOption, 0)
+
+	// X509 trust bundle entities (one per file)
 	for i := range a.Config.CertzRotateEntityCertChainTrustBundleCFile {
 		b, err := os.ReadFile(a.Config.CertzRotateEntityCertChainTrustBundleCFile[i])
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed reading trust bundle: %v", err)
 		}
-
-		opts = append(opts,
-			certzapi.Entity(
-				certzapi.Version(a.Config.CertzRotateEntityCertChainTrustBundleVersion[i]),
-				certzapi.CreatedOn(uint64(createdOn.Unix())),
-				certzapi.TrustBundle(
-					certzapi.Certificate(
-						certzapi.CertificateType_X509(),
-						certzapi.CertificateEncoding_PEM(),
-						certzapi.CertificateBytes(b),
-					),
+		opts = append(opts, certzapi.Entity(
+			certzapi.Version(sliceAt(a.Config.CertzRotateEntityCertChainTrustBundleVersion, i)),
+			certzapi.CreatedOn(ts),
+			certzapi.TrustBundle(
+				certzapi.Certificate(
+					certzapi.CertificateType_X509(),
+					certzapi.CertificateEncoding_PEM(),
+					certzapi.CertificateBytes(b),
+					certzapi.CertificateRawBytes(b),
 				),
 			),
-		)
+		))
+	}
+
+	// PKCS#7 trust bundle entities (one per file)
+	for i := range a.Config.CertzRotateEntityCertChainTrustBundlePKCS7File {
+		b, err := os.ReadFile(a.Config.CertzRotateEntityCertChainTrustBundlePKCS7File[i])
+		if err != nil {
+			return nil, fmt.Errorf("failed reading pkcs7 trust bundle: %v", err)
+		}
+		opts = append(opts, certzapi.Entity(
+			certzapi.Version(sliceAt(a.Config.CertzRotateEntityCertChainTrustBundlePKCS7Version, i)),
+			certzapi.CreatedOn(ts),
+			certzapi.TrustBundlePKCS7(string(b)),
+		))
+	}
+
+	// CRL bundle (a single entity holding all CRLs)
+	if len(a.Config.CertzRotateEntityCertChainCRLCFile) != 0 {
+		crlOpts := make([]api.GNSIOption, 0, len(a.Config.CertzRotateEntityCertChainCRLCFile))
+		for i := range a.Config.CertzRotateEntityCertChainCRLCFile {
+			b, err := os.ReadFile(a.Config.CertzRotateEntityCertChainCRLCFile[i])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading CRL: %v", err)
+			}
+			crlOpts = append(crlOpts, certzapi.CRL(
+				certzapi.CertificateType_X509(),
+				certzapi.CertificateEncoding_PEM(),
+				certzapi.CRLBytes(b),
+				certzapi.CRLID(sliceAt(a.Config.CertzRotateEntityCertChainCRLID, i)),
+			))
+		}
+		opts = append(opts, certzapi.Entity(
+			certzapi.Version(sliceAt(a.Config.CertzRotateEntityCertChainCRLVersion, 0)),
+			certzapi.CreatedOn(ts),
+			certzapi.CRLBundle(crlOpts...),
+		))
+	}
+
+	// authentication policy
+	if a.Config.CertzRotateEntityAuthPolicy != "" {
+		anyPolicy, err := a.readAuthPolicy(a.Config.CertzRotateEntityAuthPolicy)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, certzapi.Entity(
+			certzapi.Version(a.Config.CertzRotateEntityAuthPolicyVersion),
+			certzapi.CreatedOn(ts),
+			certzapi.AuthenticationPolicy(anyPolicy),
+		))
+	}
+
+	// existing-entity copies from other SSL profiles
+	for i := range a.Config.CertzRotateExistingProfileID {
+		et, err := parseExistingEntityType(sliceAt(a.Config.CertzRotateExistingType, i))
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, certzapi.Entity(
+			certzapi.Version(sliceAt(a.Config.CertzRotateExistingVersion, i)),
+			certzapi.CreatedOn(ts),
+			certzapi.ExistingEntity(a.Config.CertzRotateExistingProfileID[i], et),
+		))
 	}
 
 	return opts, nil
+}
+
+// readAuthPolicy reads an authentication policy file. The file is expected to
+// contain a JSON-encoded google.protobuf.Any; if it cannot be parsed as such,
+// the raw bytes are wrapped into an Any value.
+func (a *App) readAuthPolicy(path string) (*anypb.Any, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading auth policy: %v", err)
+	}
+	any := &anypb.Any{}
+	if err := protojson.Unmarshal(b, any); err != nil {
+		a.Logger.Warnf("auth policy %q is not a JSON-encoded google.protobuf.Any (%v); wrapping raw bytes", path, err)
+		return &anypb.Any{Value: b}, nil
+	}
+	return any, nil
+}
+
+// parseExistingEntityType maps a user-friendly entity type string to its proto
+// enum value.
+func parseExistingEntityType(s string) (certz.ExistingEntity_EntityType, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "certificate-chain", "certificate_chain", "cert-chain", "cert":
+		return certz.ExistingEntity_ENTITY_TYPE_CERTIFICATE_CHAIN, nil
+	case "trust-bundle", "trust_bundle", "bundle":
+		return certz.ExistingEntity_ENTITY_TYPE_TRUST_BUNDLE, nil
+	case "crl-bundle", "crl_bundle", "crl":
+		return certz.ExistingEntity_ENTITY_TYPE_CERTIFICATE_REVOCATION_LIST_BUNDLE, nil
+	case "auth-policy", "authentication-policy", "auth_policy", "policy":
+		return certz.ExistingEntity_ENTITY_TYPE_AUTHENTICATION_POLICY, nil
+	default:
+		return certz.ExistingEntity_ENTITY_TYPE_UNSPECIFIED, fmt.Errorf("unknown existing entity type: %q (want certificate-chain|trust-bundle|crl-bundle|auth-policy)", s)
+	}
+}
+
+// sliceAt returns s[i] or an empty string if i is out of range.
+func sliceAt(s []string, i int) string {
+	if i >= 0 && i < len(s) {
+		return s[i]
+	}
+	return ""
 }

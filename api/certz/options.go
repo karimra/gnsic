@@ -6,6 +6,7 @@ import (
 	"github.com/karimra/gnsic/api"
 	certzpb "github.com/openconfig/gnsi/certz"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 func ForceOverwrite(b bool) func(m proto.Message) error {
@@ -377,6 +378,70 @@ func TrustBundle(opts ...api.GNSIOption) func(m proto.Message) error {
 	}
 }
 
+// TrustBundlePKCS7 sets a PKCS#7-encoded trust bundle entity (the
+// `trust_bundle_pkcs7` oneof) on an Entity.
+func TrustBundlePKCS7(pkcs7Block string) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Entity:
+			msg.Entity = &certzpb.Entity_TrustBundlePkcs7{
+				TrustBundlePkcs7: &certzpb.TrustBundle{Pkcs7Block: pkcs7Block},
+			}
+		default:
+			return fmt.Errorf("option TrustBundlePKCS7: %w: %T", api.ErrInvalidMsgType, msg)
+		}
+		return nil
+	}
+}
+
+// AuthenticationPolicy sets an authentication policy entity from a serialized
+// google.protobuf.Any on an Entity.
+func AuthenticationPolicy(serialized *anypb.Any) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Entity:
+			msg.Entity = &certzpb.Entity_AuthenticationPolicy{
+				AuthenticationPolicy: &certzpb.AuthenticationPolicy{
+					Policy: &certzpb.AuthenticationPolicy_Serialized{
+						Serialized: serialized,
+					},
+				},
+			}
+		default:
+			return fmt.Errorf("option AuthenticationPolicy: %w: %T", api.ErrInvalidMsgType, msg)
+		}
+		return nil
+	}
+}
+
+// ExistingEntity references an entity from another SSL profile to be copied into
+// the profile being rotated.
+func ExistingEntity(sslProfileID string, entityType certzpb.ExistingEntity_EntityType) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Entity:
+			msg.Entity = &certzpb.Entity_ExistingEntity{
+				ExistingEntity: &certzpb.ExistingEntity{
+					SslProfileId: sslProfileID,
+					EntityType:   entityType,
+				},
+			}
+		default:
+			return fmt.Errorf("option ExistingEntity: %w: %T", api.ErrInvalidMsgType, msg)
+		}
+		return nil
+	}
+}
+
 func Certificate(opts ...api.GNSIOption) func(m proto.Message) error {
 	return func(msg proto.Message) error {
 		if msg == nil {
@@ -422,6 +487,25 @@ func PrivateKeyBytes(b []byte) func(m proto.Message) error {
 			msg.PrivateKey = b
 		default:
 			return fmt.Errorf("option PrivateKeyBytes: %w: %T", api.ErrInvalidMsgType, msg)
+		}
+		return nil
+	}
+}
+
+// CertificateRawBytes sets the (non-deprecated) raw_certificate oneof field on a
+// Certificate.
+func CertificateRawBytes(b []byte) func(m proto.Message) error {
+	return func(msg proto.Message) error {
+		if msg == nil {
+			return api.ErrInvalidMsgType
+		}
+		switch msg := msg.ProtoReflect().Interface().(type) {
+		case *certzpb.Certificate:
+			msg.CertificateType = &certzpb.Certificate_RawCertificate{
+				RawCertificate: b,
+			}
+		default:
+			return fmt.Errorf("option CertificateRawBytes: %w: %T", api.ErrInvalidMsgType, msg)
 		}
 		return nil
 	}
